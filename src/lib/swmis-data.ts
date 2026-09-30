@@ -1,12 +1,36 @@
 // GreenLoop SWMIS - Central Data Layer & State Helpers
 
-export type WasteCategory = "General" | "Recyclable" | "Organic" | "Hazardous";
+export type WasteCategory = "General" | "Recyclable" | "Organic" | "Hazardous" | "Flood & Drainage";
 export type ReportUrgency = "Normal" | "High" | "Critical";
 export type ReportStatus =
   | "Pending Agency Review"
   | "Collector Assigned"
   | "In-Progress"
   | "Resolved";
+
+export type UserRole = "citizen" | "collector" | "admin";
+
+export interface UserAccount {
+  id: string;
+  fullName: string;
+  email: string;
+  password: string;
+  role: UserRole;
+  phone?: string;
+  lga?: string;
+  address?: string;
+  // Collector specific
+  agencyId?: string;
+  agencyName?: string;
+  truckUnit?: string;
+  plateNumber?: string;
+  isActive?: boolean;
+  // Admin specific
+  organizationName?: string;
+  organizationType?: "Municipal Authority" | "Private PSP Operator";
+  agencyCode?: string;
+  createdAt: string;
+}
 
 export interface WasteAgency {
   id: string;
@@ -46,162 +70,30 @@ export interface IncidentReport {
   assignedCollectorId?: string;
   assignedCollectorName?: string;
   assignedCollectorUnit?: string;
-  image: string;
+  image?: string; // Optional image attachment
   createdAt: string;
   timeAgo: string;
   submittedBy: string;
   weightCollectedKg?: number;
   completedAt?: string;
+  isMyReport?: boolean;
+  citizenId?: string;
+  // Flood and emergency reporting extensions
+  isFloodReport?: boolean;
+  floodDepth?: "Ankle-Deep" | "Knee-Deep" | "Waist-Deep (Severe)" | "Submerged Infrastructure";
+  drainageBlockage?: string;
+  affectedInfrastructure?: string;
+  governmentAgencyDispatched?: string;
 }
 
-// Initial default agencies
-export const DEFAULT_AGENCIES: WasteAgency[] = [
-  {
-    id: "agency-vi",
-    name: "Lagos Central Waste Authority",
-    code: "LCWA-8492",
-    district: "Victoria Island & Ikoyi Corridor",
-    phone: "+234 1 800-WASTE",
-    email: "operations@lcwa.gov.ng",
-    type: "Municipal Authority",
-    weeklyPickupDays: "Tuesdays & Saturdays",
-  },
-  {
-    id: "agency-lekki",
-    name: "CleanCity PSP Operators",
-    code: "CCPO-3319",
-    district: "Lekki Phase 1, Phase 2 & Ikate",
-    phone: "+234 1 844-CLEAN",
-    email: "dispatch@cleancity.ng",
-    type: "Private PSP Operator",
-    weeklyPickupDays: "Mondays & Thursdays",
-  },
-  {
-    id: "agency-mainland",
-    name: "Mainland Metro Sanitation Services",
-    code: "MMSS-6104",
-    district: "Ikeja, Yaba & Surulere Sector",
-    phone: "+234 1 822-METRO",
-    email: "support@metroswmis.ng",
-    type: "Private PSP Operator",
-    weeklyPickupDays: "Wednesdays & Fridays",
-  },
-];
+// Real dynamic data defaults (empty - live data fetched from Neon PostgreSQL)
+export const DEFAULT_AGENCIES: WasteAgency[] = [];
 
-// Initial default collectors
-export const DEFAULT_COLLECTORS: CollectorUser[] = [
-  {
-    id: "col-1",
-    agencyId: "agency-vi",
-    name: "Tunde Adeleke",
-    email: "tunde@dispatch.swmis.org",
-    truckUnit: "Compactor Unit #04",
-    plateNumber: "LAG-782-X",
-    status: "On Shift",
-    compactorLoad: 68,
-    activeTasks: 1,
-    isActive: true,
-    joinedDate: "Jan 14, 2026",
-  },
-  {
-    id: "col-2",
-    agencyId: "agency-vi",
-    name: "Emeka Okafor",
-    email: "emeka@dispatch.swmis.org",
-    truckUnit: "Recycling Truck #02",
-    plateNumber: "LAG-441-K",
-    status: "Available",
-    compactorLoad: 32,
-    activeTasks: 0,
-    isActive: true,
-    joinedDate: "Feb 02, 2026",
-  },
-  {
-    id: "col-3",
-    agencyId: "agency-vi",
-    name: "Babajide Kareem",
-    email: "babajide@dispatch.swmis.org",
-    truckUnit: "Heavy Flatbed #08",
-    plateNumber: "LAG-902-B",
-    status: "On Shift",
-    compactorLoad: 85,
-    activeTasks: 2,
-    isActive: true,
-    joinedDate: "Mar 10, 2026",
-  },
-];
+// Real dynamic collectors default
+export const DEFAULT_COLLECTORS: CollectorUser[] = [];
 
-// Initial default incident reports
-export const DEFAULT_REPORTS: IncidentReport[] = [
-  {
-    id: "REP-2481",
-    title: "Overflowing commercial bin on curb corner",
-    description: "Multiple plastic containers and refuse spilling out into the pedestrian lane.",
-    location: "Adeola Street, Victoria Island",
-    category: "General",
-    urgency: "High",
-    agencyId: "agency-vi",
-    agencyName: "Lagos Central Waste Authority",
-    status: "Collector Assigned",
-    assignedCollectorId: "col-1",
-    assignedCollectorName: "Tunde Adeleke",
-    assignedCollectorUnit: "Compactor Unit #04",
-    image: "/images/citizen_reporting_bin.jpg",
-    createdAt: "2026-09-23T07:45:00Z",
-    timeAgo: "25 mins ago",
-    submittedBy: "Amara Okafor",
-  },
-  {
-    id: "REP-2485",
-    title: "Uncollected market waste blocking drainage",
-    description: "Decomposed organic market produce and packing crates needing immediate clearance.",
-    location: "Kofo Abayomi Street, Victoria Island",
-    category: "Organic",
-    urgency: "Critical",
-    agencyId: "agency-vi",
-    agencyName: "Lagos Central Waste Authority",
-    status: "Pending Agency Review",
-    image: "/images/waste_collection_truck.jpg",
-    createdAt: "2026-09-23T08:05:00Z",
-    timeAgo: "10 mins ago",
-    submittedBy: "Babatunde Alabi",
-  },
-  {
-    id: "REP-2475",
-    title: "Sorted cardboard & industrial packaging pile",
-    description: "Bundle of flat packed boxes ready for paper recycling.",
-    location: "Ahmadu Bello Way, Victoria Island",
-    category: "Recyclable",
-    urgency: "Normal",
-    agencyId: "agency-vi",
-    agencyName: "Lagos Central Waste Authority",
-    status: "Resolved",
-    assignedCollectorId: "col-2",
-    assignedCollectorName: "Emeka Okafor",
-    assignedCollectorUnit: "Recycling Truck #02",
-    image: "/images/waste_collectors_work.jpg",
-    createdAt: "2026-09-23T06:15:00Z",
-    timeAgo: "2 hours ago",
-    submittedBy: "Amara Okafor",
-    weightCollectedKg: 420,
-    completedAt: "2026-09-23T07:10:00Z",
-  },
-  {
-    id: "REP-2469",
-    title: "Restaurant cooking oil barrels in alley",
-    description: "Three sealed drums of spent frying oil placed near rear exit.",
-    location: "Saka Tinubu Street, Victoria Island",
-    category: "Hazardous",
-    urgency: "High",
-    agencyId: "agency-vi",
-    agencyName: "Lagos Central Waste Authority",
-    status: "Pending Agency Review",
-    image: "/images/citizen_reporting_bin.jpg",
-    createdAt: "2026-09-23T08:12:00Z",
-    timeAgo: "5 mins ago",
-    submittedBy: "Chidinma Eze",
-  },
-];
+// Real dynamic incident reports default
+export const DEFAULT_REPORTS: IncidentReport[] = [];
 
 // Helper to generate a new random Agency Code (e.g. "LCWA-5129")
 export function generateAgencyCode(prefix = "LCWA"): string {
@@ -211,23 +103,21 @@ export function generateAgencyCode(prefix = "LCWA"): string {
 
 // LocalStorage Keys
 const STORAGE_KEYS = {
-  AGENCIES: "greenloop_agencies",
-  COLLECTORS: "greenloop_collectors",
-  REPORTS: "greenloop_reports",
+  AGENCIES: "greenloop_agencies_v2",
+  COLLECTORS: "greenloop_collectors_v2",
+  REPORTS: "greenloop_reports_v2",
 };
 
 // Safe retrieval helpers with LocalStorage caching
 export function getStoredAgencies(): WasteAgency[] {
-  if (typeof window === "undefined") return DEFAULT_AGENCIES;
+  if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.AGENCIES);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.AGENCIES, JSON.stringify(DEFAULT_AGENCIES));
-      return DEFAULT_AGENCIES;
-    }
-    return JSON.parse(raw);
+    if (!raw) return [];
+    const parsed: WasteAgency[] = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
-    return DEFAULT_AGENCIES;
+    return [];
   }
 }
 
@@ -241,16 +131,13 @@ export function saveAgencies(agencies: WasteAgency[]): void {
 }
 
 export function getStoredCollectors(): CollectorUser[] {
-  if (typeof window === "undefined") return DEFAULT_COLLECTORS;
+  if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.COLLECTORS);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.COLLECTORS, JSON.stringify(DEFAULT_COLLECTORS));
-      return DEFAULT_COLLECTORS;
-    }
+    if (!raw) return [];
     return JSON.parse(raw);
   } catch {
-    return DEFAULT_COLLECTORS;
+    return [];
   }
 }
 
@@ -264,16 +151,14 @@ export function saveCollectors(collectors: CollectorUser[]): void {
 }
 
 export function getStoredReports(): IncidentReport[] {
-  if (typeof window === "undefined") return DEFAULT_REPORTS;
+  if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.REPORTS);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.REPORTS, JSON.stringify(DEFAULT_REPORTS));
-      return DEFAULT_REPORTS;
-    }
-    return JSON.parse(raw);
+    if (!raw) return [];
+    const parsed: IncidentReport[] = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
-    return DEFAULT_REPORTS;
+    return [];
   }
 }
 
@@ -286,10 +171,6 @@ export function saveReports(reports: IncidentReport[]): void {
   }
 }
 
-/**
- * Reset Agency Code manually or automatically upon staff removal.
- * Returns the updated agency and new code.
- */
 export function resetAgencyCodeInStorage(agencyId: string, customNewCode?: string): { agency: WasteAgency; newCode: string } {
   const agencies = getStoredAgencies();
   const index = agencies.findIndex((a) => a.id === agencyId);
@@ -305,16 +186,20 @@ export function resetAgencyCodeInStorage(agencyId: string, customNewCode?: strin
     return { agency: agencies[index], newCode };
   }
 
-  const fallback = { ...DEFAULT_AGENCIES[0], code: newCode };
+  const fallback: WasteAgency = {
+    id: agencyId,
+    name: "Registered Agency",
+    code: newCode,
+    district: "Municipal District",
+    phone: "",
+    email: "",
+    type: "Municipal Authority",
+    weeklyPickupDays: "Standard Schedule",
+  };
   return { agency: fallback, newCode };
 }
 
-/**
- * Remove / Deactivate a Collector from an Agency Fleet:
- * 1. Sets collector `isActive: false` and status to `Deactivated`.
- * 2. Unassigns any in-progress tasks back to 'Pending Agency Review'.
- * 3. AUTOMATICALLY RESETS the Agency Code so the dismissed worker cannot leak it.
- */
+
 export function removeCollectorFromAgency(collectorId: string): {
   removedCollector: CollectorUser | null;
   newAgencyCode: string;

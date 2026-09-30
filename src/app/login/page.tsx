@@ -30,20 +30,26 @@ export default function LoginPage() {
 
   const slides: SlideItem[] = [
     {
-      image: "/images/citizen_reporting_bin.jpg",
-      alt: "Citizen reporting an overflowing waste bin using a smartphone",
-      badge: "Citizen Reporting",
-      caption: "Select your designated waste agency and submit GPS-tagged reports.",
+      image: "/images/lagos_citizen_reporting.jpg",
+      alt: "Black Nigerian woman reporting an overflowing waste bin using her smartphone in Lagos",
+      badge: "Citizen Waste Reporting",
+      caption: "Select your designated waste agency and submit GPS-tagged reports with optional photo.",
     },
     {
-      image: "/images/waste_collection_truck.jpg",
-      alt: "Modern municipal green waste collection truck",
-      badge: "Agency Code Fleet Security",
+      image: "/images/lagos_flood_alert.jpg",
+      alt: "Black Nigerian citizen reporting severe street flooding and blocked storm drainage to the government",
+      badge: "Government Flood Alerts",
+      caption: "Direct citizen emergency alerts to state drainage authorities and rapid response units.",
+    },
+    {
+      image: "/images/lagos_waste_truck.jpg",
+      alt: "Green LAWMA municipal waste collection truck with Black Nigerian driver in Lagos",
+      badge: "Agency Fleet Operations",
       caption: "Sanitation crews register using authorized agency affiliation codes.",
     },
     {
-      image: "/images/waste_collectors_work.jpg",
-      alt: "Sanitation workers loading a green waste bin into the collection truck",
+      image: "/images/lagos_sanitation_crew.jpg",
+      alt: "Black Nigerian LAWMA sanitation workers loading waste into compactor truck in Lagos",
       badge: "Admin Dispatch Command",
       caption: "Agency directors triage incidents and manage driver rosters in real-time.",
     },
@@ -75,49 +81,47 @@ export default function LoginPage() {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage("");
+    setStatusMessage("");
     setIsLoading(true);
 
-    // If logging in as collector, check if user was deactivated by Agency Admin
-    if (role === "collector") {
-      const collectors = getStoredCollectors();
-      const matched = collectors.find(
-        (c) => c.email.toLowerCase() === email.toLowerCase() || c.id === "col-1"
-      );
+    try {
+      const res = await fetch("/api/auth/signin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
 
-      if (matched && !matched.isActive) {
+      const data = await res.json();
+
+      if (!res.ok) {
         setIsLoading(false);
-        setErrorMessage(
-          "Access Revoked: Your collector account has been deactivated by the Agency Admin. You are no longer authorized to log in."
-        );
+        setErrorMessage(data.error || "Sign in failed. Please verify your credentials.");
         return;
       }
-    }
 
-    setTimeout(() => {
-      setIsLoading(false);
-      setStatusMessage(
-        `Signed in as ${
-          role === "citizen"
-            ? "Citizen (Amara)"
-            : role === "collector"
-            ? "Collector (Tunde Adeleke)"
-            : "Agency Admin (Director Adams)"
-        }! Redirecting...`
-      );
+      const userRole = data.user?.role?.toLowerCase() || role;
+      setStatusMessage(`Signed in as ${data.user.fullName} (${data.user.role})! Redirecting...`);
+
+      if (typeof window !== "undefined") {
+        localStorage.setItem("swmis_current_user", JSON.stringify(data.user));
+      }
 
       setTimeout(() => {
-        if (role === "citizen") {
-          router.push("/citizen");
-        } else if (role === "collector") {
+        if (userRole === "collector") {
           router.push("/collector");
-        } else {
+        } else if (userRole === "admin") {
           router.push("/admin");
+        } else {
+          router.push("/citizen");
         }
-      }, 800);
-    }, 600);
+      }, 700);
+    } catch (err: any) {
+      setIsLoading(false);
+      setErrorMessage("Network error: Unable to reach the authentication server.");
+    }
   };
 
   return (
@@ -140,10 +144,11 @@ export default function LoginPage() {
         <div className="relative z-10 my-auto w-full max-w-md mx-auto">
           <div className="relative w-full h-[460px] sm:h-[500px] rounded-3xl overflow-hidden border border-[#ffffff]/15 shadow-2xl group">
             <Image
-              src={slides[activeSlide].image}
+              src={`${slides[activeSlide].image}?v=lagos2`}
               alt={slides[activeSlide].alt}
               fill
               priority
+              unoptimized
               sizes="(max-width: 1024px) 100vw, 42vw"
               className="object-cover object-center transition-all duration-700"
             />

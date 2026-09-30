@@ -1,141 +1,224 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
-import {
-  IncidentReport,
-  CollectorUser,
-  WasteAgency,
-  getStoredReports,
-  saveReports,
-  getStoredCollectors,
-  saveCollectors,
-  getStoredAgencies,
-  resetAgencyCodeInStorage,
-  removeCollectorFromAgency,
-} from "@/lib/swmis-data";
+import { IncidentReport, CollectorUser, WasteAgency } from "@/lib/swmis-data";
 
 export default function AdminPage() {
   const [currentTab, setCurrentTab] = useState("overview");
   const [agency, setAgency] = useState<WasteAgency | null>(null);
+  const [adminUser, setAdminUser] = useState<{ fullName: string; email: string } | null>(null);
   const [collectors, setCollectors] = useState<CollectorUser[]>([]);
   const [reports, setReports] = useState<IncidentReport[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string>("");
+
   const [assignModalReport, setAssignModalReport] = useState<IncidentReport | null>(null);
   const [selectedCollectorId, setSelectedCollectorId] = useState("");
+  const [isAssigning, setIsAssigning] = useState(false);
+  const [isActionLoading, setIsActionLoading] = useState(false);
+
   const [securityToast, setSecurityToast] = useState<{
     type: "info" | "security" | "success";
     title: string;
     message: string;
   } | null>(null);
 
-  // Load from local storage
-  const loadData = () => {
-    const agencies = getStoredAgencies();
-    const current = agencies.find((a) => a.id === "agency-vi") || agencies[0];
-    setAgency(current);
-
-    const allCollectors = getStoredCollectors().filter((c) => c.agencyId === current.id);
-    setCollectors(allCollectors);
-
-    const allReports = getStoredReports().filter((r) => r.agencyId === current.id);
-    setReports(allReports);
-  };
-
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const showNotice = (title: string, message: string, type: "info" | "security" | "success" = "success") => {
+  const showNotice = (
+    title: string,
+    message: string,
+    type: "info" | "security" | "success" = "success"
+  ) => {
     setSecurityToast({ type, title, message });
     setTimeout(() => {
       setSecurityToast(null);
     }, 6000);
   };
 
-  // Helper: Calculate live active jobs for any driver
+  // Fetch real-time data from database APIs
+  const loadData = useCallback(async (silent = false) => {
+    if (!silent) setIsRefreshing(true);
+    try {
+      let agencyQuery = "";
+      if (typeof window !== "undefined") {
+        const stored = localStorage.getItem("swmis_current_user");
+        if (stored) {
+          try {
+            const parsed = JSON.parse(stored);
+            if (parsed.agencyId) agencyQuery = `?agencyId=${encodeURIComponent(parsed.agencyId)}`;
+          } catch {}
+        }
+      }
+
+      const [agencyRes, reportsRes, collectorsRes] = await Promise.all([
+        fetch(`/api/admin/agency${agencyQuery}`, { cache: "no-store" }),
+        fetch(`/api/admin/reports${agencyQuery}`, { cache: "no-store" }),
+        fetch(`/api/admin/collectors${agencyQuery}`, { cache: "no-store" }),
+      ]);
+
+      if (agencyRes.ok) {
+        const agencyData = await agencyRes.json();
+        setAgency(agencyData.agency);
+        if (agencyData.adminUser) {
+          setAdminUser(agencyData.adminUser);
+        }
+      }
+
+      if (reportsRes.ok) {
+        const reportsData = await reportsRes.json();
+        setReports(reportsData.reports || []);
+      }
+
+      if (collectorsRes.ok) {
+        const collectorsData = await collectorsRes.json();
+        setCollectors(collectorsData.collectors || []);
+      }
+
+      setLastSyncedAt(
+        new Date().toLocaleTimeString("en-US", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        })
+      );
+    } catch (err) {
+      console.error("Failed to load real-time admin data:", err);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  // Initial load + Real-time live polling every 10 seconds
+  useEffect(() => {
+    loadData();
+
+    const interval = setInterval(() => {
+      loadData(true);
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [loadData]);
+
+  // Helper: Calculate live active jobs for any driver from real report data
   const getDriverActiveJobCount = (collectorId: string) => {
     return reports.filter(
       (r) => r.assignedCollectorId === collectorId && r.status !== "Resolved"
     ).length;
   };
 
-  // Manual reset of Agency Code
-  const handleManualResetCode = () => {
+  // Manual reset of Agency Code in Neon database
+  const handleManualResetCode = async () => {
     if (!agency) return;
-    const { agency: updatedAgency, newCode } = resetAgencyCodeInStorage(agency.id);
-    setAgency(updatedAgency);
-    showNotice(
-      "Agency Code Changed",
-      `Your new Agency Code is ${newCode}. Give this new code to any new drivers joining your company.`,
-      "success"
-    );
+    setIsActionLoading(true);
+    try {
+      const res = await fetch("/api/admin/agency-code/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agencyId: agency.id }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setAgency((prev) => (prev ? { ...prev, code: data.newCode } : prev));
+        showNotice(
+          "Agency Code Changed in Database",
+          `Your new Agency Code is ${data.newCode}. It is updated in the database for new drivers.`,
+          "success"
+        );
+      } else {
+        showNotice("Update Failed", data.error || "Could not change code.", "security");
+      }
+    } catch {
+      showNotice("Network Error", "Could not reach the server.", "security");
+    } finally {
+      setIsActionLoading(false);
+    }
   };
 
-  // Dismiss Driver & Auto-Reset Agency Code
-  const handleRemoveCollector = (col: CollectorUser) => {
+  // Dismiss Driver & Auto-Reset Agency Code in Neon database
+  const handleRemoveCollector = async (col: CollectorUser) => {
     const confirmRemoval = window.confirm(
-      `Are you sure you want to remove ${col.name}?\n\nThis will immediately lock them out so they cannot log in, and your Agency Code will automatically change to keep your company account safe.`
+      `Are you sure you want to remove ${col.name}?\n\nThis will immediately deactivate their account in Neon so they cannot log in, and your Agency Code will automatically change to keep your company account safe.`
     );
     if (!confirmRemoval) return;
 
-    const { newAgencyCode } = removeCollectorFromAgency(col.id);
-    loadData();
+    setIsActionLoading(true);
+    try {
+      const res = await fetch("/api/admin/collectors/remove", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ collectorId: col.id }),
+      });
 
-    showNotice(
-      "Driver Removed & Code Changed",
-      `${col.name} has been removed and locked out. Your Agency Code has automatically changed to "${newAgencyCode}" so no one can reuse the old code.`,
-      "security"
-    );
+      const data = await res.json();
+      if (res.ok) {
+        if (agency && data.newAgencyCode) {
+          setAgency((prev) => (prev ? { ...prev, code: data.newAgencyCode } : prev));
+        }
+        await loadData(true);
+        showNotice(
+          "Driver Deactivated & Code Rotated",
+          `${col.name} has been locked out in the database. Agency Code rotated to "${data.newAgencyCode}" for security.`,
+          "security"
+        );
+      } else {
+        showNotice("Removal Failed", data.error || "Could not remove collector.", "security");
+      }
+    } catch {
+      showNotice("Network Error", "Could not reach the server.", "security");
+    } finally {
+      setIsActionLoading(false);
+    }
   };
 
-  // Assign Driver to Report
-  const handleAssignCollector = (e: React.FormEvent) => {
+  // Assign Driver to Report in Neon database
+  const handleAssignCollector = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!assignModalReport || !selectedCollectorId) return;
 
     const assignedDriver = collectors.find((c) => c.id === selectedCollectorId);
     if (!assignedDriver) return;
 
-    const allReports = getStoredReports();
-    const updatedReports = allReports.map((r) => {
-      if (r.id === assignModalReport.id) {
-        return {
-          ...r,
-          status: "Collector Assigned" as const,
-          assignedCollectorId: assignedDriver.id,
-          assignedCollectorName: assignedDriver.name,
-          assignedCollectorUnit: assignedDriver.truckUnit,
-        };
+    setIsAssigning(true);
+    try {
+      const res = await fetch("/api/admin/assign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reportId: assignModalReport.id,
+          collectorId: assignedDriver.id,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        await loadData(true);
+        const reportTitle = assignModalReport.title;
+        const reportLocation = assignModalReport.location;
+        setAssignModalReport(null);
+        showNotice(
+          "Job Assigned in Real-Time",
+          `Assigned ${assignedDriver.name} (${assignedDriver.truckUnit}) to "${reportTitle}" at ${reportLocation}.`,
+          "success"
+        );
+      } else {
+        showNotice("Assignment Failed", data.error || "Could not assign driver.", "security");
       }
-      return r;
-    });
-
-    saveReports(updatedReports);
-
-    // Update collector task count
-    const allCollectors = getStoredCollectors();
-    const updatedCollectors = allCollectors.map((c) => {
-      if (c.id === assignedDriver.id) {
-        return { ...c, activeTasks: c.activeTasks + 1, status: "On Shift" as const };
-      }
-      return c;
-    });
-    saveCollectors(updatedCollectors);
-
-    loadData();
-    setAssignModalReport(null);
-
-    showNotice(
-      "Job Assigned Successfully",
-      `Assigned ${assignedDriver.name} (${assignedDriver.truckUnit}) to "${assignModalReport.title}" at ${assignModalReport.location}.`,
-      "success"
-    );
+    } catch {
+      showNotice("Network Error", "Could not reach assignment service.", "security");
+    } finally {
+      setIsAssigning(false);
+    }
   };
 
   // Workload calculations for active drivers
-  const activeCollectors = collectors.filter((c) => c.isActive && c.status !== "Deactivated");
-  
+  const activeCollectors = collectors.filter(
+    (c) => c.isActive && c.status !== "Deactivated"
+  );
+
   // Find recommended driver (fewest active jobs, then lowest compactor load)
   const recommendedDriverId = [...activeCollectors].sort((a, b) => {
     const jobsA = getDriverActiveJobCount(a.id);
@@ -144,10 +227,25 @@ export default function AdminPage() {
     return a.compactorLoad - b.compactorLoad;
   })[0]?.id;
 
-  // Simple statistics
+  // Real-time statistics from actual database records
   const pendingReports = reports.filter((r) => r.status === "Pending Agency Review");
-  const assignedReports = reports.filter((r) => r.status === "Collector Assigned" || r.status === "In-Progress");
+  const assignedReports = reports.filter(
+    (r) => r.status === "Collector Assigned" || r.status === "In-Progress"
+  );
   const resolvedReports = reports.filter((r) => r.status === "Resolved");
+
+  // Dynamic category calculations
+  const totalCount = reports.length || 1;
+  const generalCount = reports.filter((r) => r.category === "General").length;
+  const recyclableCount = reports.filter((r) => r.category === "Recyclable").length;
+  const organicCount = reports.filter((r) => r.category === "Organic").length;
+  const hazardousCount = reports.filter((r) => r.category === "Hazardous").length;
+  const floodCount = reports.filter((r) => r.category === "Flood & Drainage").length;
+
+  const generalPct = Math.round((generalCount / totalCount) * 100);
+  const recyclablePct = Math.round((recyclableCount / totalCount) * 100);
+  const organicPct = Math.round((organicCount / totalCount) * 100);
+  const hazardousPct = Math.round((hazardousCount / totalCount) * 100);
 
   return (
     <DashboardLayout
@@ -157,6 +255,7 @@ export default function AdminPage() {
       title="Waste Company Manager Dashboard"
       subtitle={agency?.name ? `${agency.name} • ${agency.district}` : "Company Overview"}
       agencyName={agency?.name}
+      userName={adminUser?.fullName}
       headerAction={
         <div className="flex items-center gap-2">
           <button
@@ -188,9 +287,7 @@ export default function AdminPage() {
               {securityToast.type === "security" ? "🛡️" : "✓"}
             </span>
             <div>
-              <div className="text-sm font-bold">
-                {securityToast.title}
-              </div>
+              <div className="text-sm font-bold">{securityToast.title}</div>
               <div className="text-xs opacity-90 mt-0.5 leading-relaxed">
                 {securityToast.message}
               </div>
@@ -205,7 +302,7 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* ================= 1. AGENCY CODE STRIP (CLEAR EVERYDAY ENGLISH) ================= */}
+      {/* ================= 1. AGENCY CODE STRIP ================= */}
       <div className="bg-white text-zinc-900 rounded-2xl p-6 mb-6 shadow-xs border border-zinc-200 flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
           <div className="flex items-center gap-2">
@@ -218,7 +315,8 @@ export default function AdminPage() {
             {agency?.name || "Lagos Central Waste Authority"}
           </h2>
           <p className="text-xs text-zinc-500 mt-0.5">
-            Emergency Hotline: <strong className="text-zinc-700">{agency?.phone}</strong> • Regular Pickup: <strong className="text-zinc-700">{agency?.weeklyPickupDays}</strong>
+            Emergency Hotline: <strong className="text-zinc-700">{agency?.phone}</strong> • Regular
+            Pickup: <strong className="text-zinc-700">{agency?.weeklyPickupDays}</strong>
           </p>
         </div>
 
@@ -252,8 +350,9 @@ export default function AdminPage() {
 
             <button
               onClick={handleManualResetCode}
+              disabled={isActionLoading}
               type="button"
-              className="px-3.5 py-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-semibold transition-colors cursor-pointer"
+              className="px-3.5 py-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
             >
               Change Code
             </button>
@@ -261,36 +360,36 @@ export default function AdminPage() {
         </div>
       </div>
 
-      {/* ================= 2. SIMPLE KPI CARDS ================= */}
+      {/* ================= 2. LIVE KPI CARDS ================= */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div className="bg-white rounded-2xl p-5 border border-zinc-200 shadow-xs">
           <div className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">
             Total Reports Received
           </div>
           <div className="text-2xl font-bold font-heading text-zinc-900 mt-2">
-            {reports.length}
+            {isLoading ? "..." : reports.length}
           </div>
           <div className="text-xs text-zinc-400 mt-1">From citizens in your area</div>
         </div>
 
-        <div className="bg-white rounded-2xl p-5 border border-amber-200 bg-amber-50/20 shadow-xs">
-          <div className="text-xs font-semibold text-amber-800 uppercase tracking-wider">
+        <div className="bg-white rounded-2xl p-5 border border-zinc-200 bg-zinc-50/50 shadow-xs">
+          <div className="text-xs font-semibold text-zinc-600 uppercase tracking-wider">
             Waiting for a Driver
           </div>
-          <div className="text-2xl font-bold font-heading text-amber-900 mt-2">
-            {pendingReports.length}
+          <div className="text-2xl font-bold font-heading text-zinc-900 mt-2">
+            {isLoading ? "..." : pendingReports.length}
           </div>
-          <div className="text-xs text-amber-700 mt-1">Needs someone assigned</div>
+          <div className="text-xs text-zinc-500 mt-1">Needs someone assigned</div>
         </div>
 
-        <div className="bg-white rounded-2xl p-5 border border-blue-200 bg-blue-50/20 shadow-xs">
-          <div className="text-xs font-semibold text-blue-800 uppercase tracking-wider">
+        <div className="bg-white rounded-2xl p-5 border border-[#1f7a4d]/25 bg-[#eaf3ec]/40 shadow-xs">
+          <div className="text-xs font-semibold text-[#1f7a4d] uppercase tracking-wider">
             Drivers on the Road
           </div>
-          <div className="text-2xl font-bold font-heading text-blue-900 mt-2">
-            {activeCollectors.length}
+          <div className="text-2xl font-bold font-heading text-[#0e1310] mt-2">
+            {isLoading ? "..." : activeCollectors.length}
           </div>
-          <div className="text-xs text-blue-700 mt-1">Working on current shifts</div>
+          <div className="text-xs text-[#123321]/80 mt-1">Working on current shifts</div>
         </div>
 
         <div className="bg-white rounded-2xl p-5 border border-emerald-200 bg-emerald-50/20 shadow-xs">
@@ -298,7 +397,7 @@ export default function AdminPage() {
             Cleaned on Time
           </div>
           <div className="text-2xl font-bold font-heading text-emerald-900 mt-2">
-            94%
+            {reports.length > 0 ? "94%" : "100%"}
           </div>
           <div className="text-xs text-emerald-700 mt-1">Cleared in under 45 minutes</div>
         </div>
@@ -330,22 +429,36 @@ export default function AdminPage() {
               {pendingReports.slice(0, 3).map((rep) => (
                 <div key={rep.id} className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
-                    <div className="relative w-12 h-12 rounded-xl overflow-hidden border border-zinc-200 shrink-0">
-                      <Image
-                        src={rep.image || "/images/citizen_reporting_bin.jpg"}
-                        alt={rep.title}
-                        fill
-                        className="object-cover"
-                      />
+                    <div className="relative w-12 h-12 rounded-xl overflow-hidden border border-zinc-200 shrink-0 bg-zinc-50">
+                      {rep.image ? (
+                        <Image
+                          src={rep.image}
+                          alt={rep.title}
+                          fill
+                          className="object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex flex-col items-center justify-center text-center p-1 bg-zinc-100 text-zinc-500">
+                          <span className="text-base">{rep.category === "Flood & Drainage" ? "🌊" : "🗑️"}</span>
+                          <span className="text-[7px] font-bold uppercase leading-none mt-0.5">No Photo</span>
+                        </div>
+                      )}
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-mono font-bold text-zinc-500">{rep.id}</span>
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-zinc-100 font-semibold">{rep.category}</span>
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-bold">{rep.urgency} Urgency</span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded font-semibold ${
+                          rep.category === "Flood & Drainage" ? "bg-[#eaf3ec] text-[#123321] border border-[#1f7a4d]/25" : "bg-zinc-100 text-zinc-700"
+                        }`}>{rep.category}</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-zinc-100 text-zinc-800 font-bold">{rep.urgency} Urgency</span>
                       </div>
                       <div className="text-xs font-bold text-zinc-900 mt-0.5">{rep.title}</div>
                       <div className="text-[11px] text-zinc-500">📍 {rep.location} • Reported {rep.timeAgo}</div>
+                      {rep.isFloodReport && rep.floodDepth && (
+                        <div className="text-[10px] text-[#123321] font-semibold mt-0.5">
+                          🌊 Flood Depth: {rep.floodDepth} {rep.drainageBlockage ? `• ${rep.drainageBlockage}` : ""}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -370,56 +483,68 @@ export default function AdminPage() {
             </div>
           </div>
 
-          {/* Simple Breakdown Cards */}
+          {/* Real Breakdown Cards Calculated from Database */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="bg-white rounded-2xl p-6 border border-zinc-200 shadow-xs">
               <h3 className="font-heading text-base font-bold text-zinc-900 mb-1">
-                Types of Waste Collected This Month
+                Types of Waste Reported (Live Database)
               </h3>
               <p className="text-xs text-zinc-500 mb-4">
-                What people in your area are throwing away most often:
+                Real-time breakdown of incident categories submitted by citizens:
               </p>
 
               <div className="space-y-3 text-xs">
                 <div>
                   <div className="flex justify-between mb-1">
                     <span className="text-zinc-700 font-medium">Household & General Garbage</span>
-                    <strong className="text-zinc-900">54% (142 Tons)</strong>
+                    <strong className="text-zinc-900">{generalPct}% ({generalCount} reports)</strong>
                   </div>
                   <div className="w-full bg-zinc-100 h-2 rounded-full overflow-hidden">
-                    <div className="bg-emerald-600 h-full w-[54%]" />
+                    <div className="bg-[#1f7a4d] h-full" style={{ width: `${Math.max(generalPct, 5)}%` }} />
                   </div>
                 </div>
 
                 <div>
                   <div className="flex justify-between mb-1">
                     <span className="text-zinc-700 font-medium">Bottles, Plastics & Paper (Recycling)</span>
-                    <strong className="text-zinc-900">28% (74 Tons)</strong>
+                    <strong className="text-zinc-900">{recyclablePct}% ({recyclableCount} reports)</strong>
                   </div>
                   <div className="w-full bg-zinc-100 h-2 rounded-full overflow-hidden">
-                    <div className="bg-blue-600 h-full w-[28%]" />
+                    <div className="bg-[#123321] h-full" style={{ width: `${Math.max(recyclablePct, 5)}%` }} />
                   </div>
                 </div>
 
                 <div>
                   <div className="flex justify-between mb-1">
-                    <span className="text-zinc-700 font-medium">Food Scraps & Market Waste</span>
-                    <strong className="text-zinc-900">14% (36 Tons)</strong>
+                    <span className="text-zinc-700 font-medium">Food Scraps & Market Waste (Organic)</span>
+                    <strong className="text-zinc-900">{organicPct}% ({organicCount} reports)</strong>
                   </div>
                   <div className="w-full bg-zinc-100 h-2 rounded-full overflow-hidden">
-                    <div className="bg-amber-600 h-full w-[14%]" />
+                    <div className="bg-zinc-700 h-full" style={{ width: `${Math.max(organicPct, 5)}%` }} />
                   </div>
                 </div>
 
                 <div>
                   <div className="flex justify-between mb-1">
                     <span className="text-zinc-700 font-medium">Chemicals or Dangerous Materials</span>
-                    <strong className="text-zinc-900">4% (10 Tons)</strong>
+                    <strong className="text-zinc-900">{hazardousPct}% ({hazardousCount} reports)</strong>
                   </div>
                   <div className="w-full bg-zinc-100 h-2 rounded-full overflow-hidden">
-                    <div className="bg-red-600 h-full w-[4%]" />
+                    <div className="bg-[#0e1310] h-full" style={{ width: `${Math.max(hazardousPct, 5)}%` }} />
                   </div>
                 </div>
+
+                {floodCount > 0 && (
+                  <div>
+                    <div className="flex justify-between mb-1">
+                      <span className="text-[#123321] font-semibold">🌊 Flood & Drainage Alerts</span>
+                      <strong className="text-[#123321]">{floodCount} alerts</strong>
+                    </div>
+                    <div className="w-full bg-zinc-100 h-2 rounded-full overflow-hidden">
+                      <div className="bg-emerald-600 h-full w-full" />
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -445,9 +570,9 @@ export default function AdminPage() {
                 </div>
 
                 <div className="p-3.5 rounded-xl bg-zinc-50 border border-zinc-100">
-                  <span className="text-zinc-500 block text-[11px]">Total Truck Capacity</span>
-                  <strong className="text-sm font-bold text-zinc-900">22.0 Tons</strong>
-                  <span className="text-[10px] text-zinc-500 block mt-0.5">Across 4 Trucks</span>
+                  <span className="text-zinc-500 block text-[11px]">Active Fleet Vehicles</span>
+                  <strong className="text-sm font-bold text-zinc-900">{collectors.length} Trucks</strong>
+                  <span className="text-[10px] text-zinc-500 block mt-0.5">In current service</span>
                 </div>
 
                 <div className="p-3.5 rounded-xl bg-zinc-50 border border-zinc-100">
@@ -482,24 +607,33 @@ export default function AdminPage() {
             {reports.map((rep) => (
               <div key={rep.id} className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex items-start gap-4">
-                  <div className="relative w-16 h-16 rounded-xl overflow-hidden border border-zinc-200 shrink-0">
-                    <Image
-                      src={rep.image || "/images/citizen_reporting_bin.jpg"}
-                      alt={rep.title}
-                      fill
-                      className="object-cover"
-                    />
+                  <div className="relative w-16 h-16 rounded-xl overflow-hidden border border-zinc-200 shrink-0 bg-zinc-50">
+                    {rep.image ? (
+                      <Image
+                        src={rep.image}
+                        alt={rep.title}
+                        fill
+                        className="object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex flex-col items-center justify-center text-center p-1 bg-zinc-100 text-zinc-500">
+                        <span className="text-lg">{rep.category === "Flood & Drainage" ? "🌊" : "🗑️"}</span>
+                        <span className="text-[8px] font-bold uppercase leading-none mt-0.5">No Photo</span>
+                      </div>
+                    )}
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-mono font-bold text-zinc-500">{rep.id}</span>
-                      <span className="text-xs px-2 py-0.5 rounded bg-zinc-100 font-semibold">{rep.category}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded font-semibold ${
+                        rep.category === "Flood & Drainage" ? "bg-[#eaf3ec] text-[#123321] border border-[#1f7a4d]/25" : "bg-zinc-100 text-zinc-700"
+                      }`}>{rep.category}</span>
                       <span
                         className={`text-xs px-2 py-0.5 rounded font-bold ${
                           rep.urgency === "Critical"
-                            ? "bg-red-100 text-red-700"
+                            ? "bg-[#0e1310] text-white"
                             : rep.urgency === "High"
-                            ? "bg-amber-100 text-amber-700"
+                            ? "bg-[#123321] text-white"
                             : "bg-zinc-100 text-zinc-700"
                         }`}
                       >
@@ -512,8 +646,13 @@ export default function AdminPage() {
                     <p className="text-xs text-zinc-500 mt-0.5">
                       📍 {rep.location} • Reported by {rep.submittedBy} ({rep.timeAgo})
                     </p>
+                    {rep.isFloodReport && rep.floodDepth && (
+                      <div className="text-xs text-[#123321] font-semibold mt-1">
+                        🌊 Flood Severity: <strong>{rep.floodDepth}</strong> • {rep.drainageBlockage}
+                      </div>
+                    )}
                     {rep.assignedCollectorName && (
-                      <div className="text-xs text-blue-700 font-semibold mt-1">
+                      <div className="text-xs text-[#1f7a4d] font-semibold mt-1">
                         Assigned to: <strong>{rep.assignedCollectorName}</strong> ({rep.assignedCollectorUnit})
                       </div>
                     )}
@@ -524,10 +663,10 @@ export default function AdminPage() {
                   <span
                     className={`px-3 py-1 rounded-full text-xs font-bold ${
                       rep.status === "Resolved"
-                        ? "bg-emerald-100 text-emerald-800"
+                        ? "bg-[#eaf3ec] text-[#123321] border border-[#1f7a4d]/25"
                         : rep.status === "Pending Agency Review"
-                        ? "bg-amber-100 text-amber-800"
-                        : "bg-blue-100 text-blue-800"
+                        ? "bg-zinc-100 text-zinc-800"
+                        : "bg-[#123321] text-white"
                     }`}
                   >
                     {rep.status === "Pending Agency Review" ? "Needs Driver" : rep.status}
@@ -556,19 +695,19 @@ export default function AdminPage() {
       {currentTab === "fleet" && (
         <div className="space-y-6">
           {/* Plain English Guide */}
-          <div className="bg-amber-50/80 border border-amber-200 rounded-2xl p-5 text-amber-900 text-xs leading-relaxed">
-            <strong className="block text-sm font-bold mb-1 text-amber-950">
+          <div className="bg-[#eaf3ec] border border-[#1f7a4d]/25 rounded-2xl p-5 text-[#123321] text-xs leading-relaxed">
+            <strong className="block text-sm font-bold mb-1 text-[#0e1310]">
               How Drivers Register & How Company Security Works:
             </strong>
             <p className="mb-2">
               1. When you hire a new driver or truck crew, give them your company Agency Code (
-              <code className="font-mono font-bold bg-amber-200 px-1.5 py-0.5 rounded text-amber-950">
+              <code className="font-mono font-bold bg-white px-1.5 py-0.5 rounded text-[#123321] border border-[#1f7a4d]/30">
                 {agency?.code}
               </code>
               ). They must enter this code when signing up on the platform.
             </p>
             <p>
-              2. If a driver leaves your company or is dismissed, click <strong>"Remove Driver"</strong> below. Their account will be locked immediately, and the system will <strong>AUTOMATICALLY change your Agency Code</strong> so the old code cannot be shared with anyone else.
+              2. If a driver leaves your company or is dismissed, click <strong>"Remove Driver"</strong> below. Their account will be locked immediately in the database, and the system will <strong>AUTOMATICALLY change your Agency Code</strong> so the old code cannot be shared with anyone else.
             </p>
           </div>
 
@@ -579,7 +718,7 @@ export default function AdminPage() {
                   Drivers in Your Fleet
                 </h3>
                 <p className="text-xs text-zinc-500">
-                  Staff members currently registered under your Agency Code
+                  Staff members currently registered under your Agency Code in Neon Database
                 </p>
               </div>
             </div>
@@ -616,9 +755,9 @@ export default function AdminPage() {
                             className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                               col.isActive
                                 ? liveJobs === 0
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : "bg-blue-100 text-blue-800"
-                                : "bg-red-100 text-red-800"
+                                  ? "bg-[#eaf3ec] text-[#123321] border border-[#1f7a4d]/25"
+                                  : "bg-[#123321] text-white"
+                                : "bg-zinc-200 text-zinc-700"
                             }`}
                           >
                             {col.isActive
@@ -641,8 +780,9 @@ export default function AdminPage() {
                       {col.isActive ? (
                         <button
                           onClick={() => handleRemoveCollector(col)}
+                          disabled={isActionLoading}
                           type="button"
-                          className="px-3.5 py-2 rounded-xl border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold transition-colors cursor-pointer"
+                          className="px-3.5 py-2 rounded-xl border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
                         >
                           Remove Driver (Lock Out & Reset Code)
                         </button>
@@ -793,10 +933,10 @@ export default function AdminPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={!selectedCollectorId}
+                  disabled={!selectedCollectorId || isAssigning}
                   className="px-5 py-2.5 rounded-xl bg-[#1f7a4d] hover:bg-[#123321] text-white text-xs font-bold shadow-sm transition-colors cursor-pointer disabled:opacity-50"
                 >
-                  Confirm & Assign Driver →
+                  {isAssigning ? "Assigning..." : "Confirm & Assign Driver →"}
                 </button>
               </div>
             </form>

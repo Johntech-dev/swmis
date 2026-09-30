@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, ReactNode } from "react";
+import { useState, useEffect, ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -39,14 +39,52 @@ export default function DashboardLayout({
   const [mobileOpen, setMobileOpen] = useState(false);
   const router = useRouter();
 
+  const [resolvedUserName, setResolvedUserName] = useState<string>(userName || "");
+
+  useEffect(() => {
+    if (userName) {
+      setResolvedUserName(userName);
+      return;
+    }
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("swmis_current_user");
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (parsed.fullName) {
+            setResolvedUserName(parsed.fullName);
+            return;
+          }
+        } catch {}
+      }
+    }
+  }, [userName]);
+
+  const activeDisplayName =
+    resolvedUserName ||
+    (role === "admin"
+      ? "Agency Admin"
+      : role === "collector"
+      ? "Sanitation Driver"
+      : "Resident Citizen");
+
+  const avatarInitials =
+    activeDisplayName
+      .split(" ")
+      .filter(Boolean)
+      .map((n) => n[0])
+      .slice(0, 2)
+      .join("")
+      .toUpperCase() || "GL";
+
   // Role details mapping with simple, natural English labels
   const roleConfig = {
     citizen: {
       badge: "Citizen",
       badgeColor: "bg-[#eaf3ec] text-[#1f7a4d] border-[#1f7a4d]/20",
-      defaultName: userName || "Amara Okafor",
-      detail: "Victoria Island Resident",
-      avatarInitials: "AO",
+      defaultName: activeDisplayName,
+      detail: "Community Resident",
+      avatarInitials,
       navItems: [
         {
           label: "My Reports & Tracking",
@@ -58,7 +96,17 @@ export default function DashboardLayout({
           ),
         },
         {
-          label: "Waste Companies",
+          label: "Report Flood & Drainage",
+          id: "flood",
+          badge: "Govt Alert",
+          icon: ({ className }: { className?: string }) => (
+            <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          ),
+        },
+        {
+          label: "Waste & Drainage Agencies",
           id: "agencies",
           icon: ({ className }: { className?: string }) => (
             <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
@@ -80,9 +128,9 @@ export default function DashboardLayout({
     collector: {
       badge: "Driver / Crew",
       badgeColor: "bg-[#fef3c7] text-[#92400e] border-[#f59e0b]/30",
-      defaultName: userName || "Tunde Adeleke",
-      detail: agencyName || "Lagos Central Waste Authority",
-      avatarInitials: "TA",
+      defaultName: activeDisplayName,
+      detail: agencyName || "Waste Authority",
+      avatarInitials,
       navItems: [
         {
           label: "Today's Jobs",
@@ -117,9 +165,9 @@ export default function DashboardLayout({
     admin: {
       badge: "Agency Admin",
       badgeColor: "bg-[#eaf3ec] text-[#123321] border-[#1f7a4d]/25",
-      defaultName: userName || "Director Adams",
-      detail: agencyName || "Lagos Central Waste Authority",
-      avatarInitials: "DA",
+      defaultName: activeDisplayName,
+      detail: agencyName || "Waste Authority",
+      avatarInitials,
       navItems: [
         {
           label: "Overview",
@@ -152,7 +200,15 @@ export default function DashboardLayout({
     },
   }[role];
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    try {
+      await fetch("/api/auth/signout", { method: "POST" });
+    } catch (e) {
+      console.error("Sign out error:", e);
+    }
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("swmis_current_user");
+    }
     router.push("/login");
   };
 
@@ -176,10 +232,10 @@ export default function DashboardLayout({
           <div className="px-5 pt-4 pb-2">
             <div className="bg-[#f8faf8] rounded-xl p-3 border border-zinc-200/70">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-[#1f7a4d]">
-                Active Company
+                {role === "citizen" ? "Account Type" : "Active Company"}
               </div>
               <div className="text-xs font-bold text-zinc-900 truncate mt-0.5">
-                {agencyName || roleConfig.detail}
+                {role === "citizen" ? "Resident Citizen Portal" : agencyName || roleConfig.detail}
               </div>
               <div className="text-[11px] text-zinc-500 truncate mt-0.5">
                 Signed in as: <strong>{roleConfig.defaultName}</strong>
@@ -206,11 +262,13 @@ export default function DashboardLayout({
                       : "text-zinc-600 hover:bg-zinc-100/80 hover:text-zinc-900 font-medium"
                   }`}
                 >
-                  <Icon
-                    className={`w-4 h-4 shrink-0 transition-colors ${
-                      isActive ? "text-[#1f7a4d]" : "text-zinc-400"
-                    }`}
-                  />
+                  {role !== "citizen" && (
+                    <Icon
+                      className={`w-4 h-4 shrink-0 transition-colors ${
+                        isActive ? "text-[#1f7a4d]" : "text-zinc-400"
+                      }`}
+                    />
+                  )}
                   <span className="truncate">{item.label}</span>
                 </button>
               );
@@ -238,9 +296,11 @@ export default function DashboardLayout({
             type="button"
             className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-white hover:bg-red-50 hover:text-red-700 hover:border-red-200 text-xs font-semibold text-zinc-700 transition-colors cursor-pointer border border-zinc-200 shadow-2xs"
           >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-            </svg>
+            {role !== "citizen" && (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+            )}
             <span>Sign Out</span>
           </button>
         </div>
@@ -255,16 +315,20 @@ export default function DashboardLayout({
         <button
           onClick={() => setMobileOpen(!mobileOpen)}
           type="button"
-          className="p-2 rounded-lg bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
+          className="p-2 rounded-lg bg-zinc-100 text-zinc-700 hover:bg-zinc-200 text-xs font-semibold"
           aria-label="Toggle navigation menu"
         >
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-            {mobileOpen ? (
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            ) : (
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-            )}
-          </svg>
+          {role === "citizen" ? (
+            <span>{mobileOpen ? "Close" : "Menu"}</span>
+          ) : (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              {mobileOpen ? (
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              ) : (
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+              )}
+            </svg>
+          )}
         </button>
       </div>
 
@@ -309,15 +373,9 @@ export default function DashboardLayout({
         {/* TOP STATUS BAR */}
         <header className="bg-white border-b border-zinc-200/80 sticky top-0 z-20 px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="font-heading text-xl sm:text-2xl font-bold text-zinc-900 tracking-tight">
-                {title}
-              </h1>
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Live System Active
-              </span>
-            </div>
+            <h1 className="font-heading text-xl sm:text-2xl font-bold text-zinc-900 tracking-tight">
+              {title}
+            </h1>
             {subtitle && (
               <p className="text-xs sm:text-sm text-zinc-500 mt-0.5">
                 {subtitle}

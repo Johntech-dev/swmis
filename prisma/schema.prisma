@@ -1,0 +1,115 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  CITIZEN
+  COLLECTOR
+  ADMIN
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  password     String
+  fullName     String
+  role         Role     @default(CITIZEN)
+  phone        String?
+  address      String?
+  neighborhood String?
+  lga          String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Role relations
+  collectorProfile    CollectorProfile?
+  administeredAgencies WasteAgency[]     @relation("AgencyAdmins")
+  reportedIncidents   IncidentReport[]  @relation("CitizenReports")
+
+  @@index([email])
+  @@index([role])
+}
+
+model WasteAgency {
+  id               String   @id @default(cuid())
+  name             String
+  code             String   @unique // e.g. LCWA-8492
+  district         String
+  phone            String
+  email            String
+  type             String   @default("Municipal Authority") // "Municipal Authority" | "Private PSP Operator"
+  weeklyPickupDays String   @default("Tuesdays & Saturdays")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  admins     User[]             @relation("AgencyAdmins")
+  collectors CollectorProfile[]
+  incidents  IncidentReport[]
+
+  @@index([code])
+}
+
+model CollectorProfile {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agencyId      String
+  agency        WasteAgency @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  truckUnit     String
+  plateNumber   String
+  status        String   @default("Available") // "On Shift" | "Available" | "Maintenance" | "Deactivated"
+  compactorLoad Int      @default(0)
+  activeTasks   Int      @default(0)
+  isActive      Boolean  @default(true)
+  joinedDate    String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  assignedIncidents IncidentReport[]
+
+  @@index([agencyId])
+  @@index([userId])
+}
+
+model IncidentReport {
+  id                         String            @id @default(cuid())
+  title                      String
+  description                String
+  location                   String
+  category                   String            // "General" | "Recyclable" | "Organic" | "Hazardous" | "Flood & Drainage"
+  urgency                    String            // "Normal" | "High" | "Critical"
+  status                     String            @default("Pending Agency Review") // "Pending Agency Review" | "Collector Assigned" | "In-Progress" | "Resolved"
+  
+  agencyId                   String
+  agency                     WasteAgency       @relation(fields: [agencyId], references: [id])
+  
+  citizenId                  String?
+  citizen                    User?             @relation("CitizenReports", fields: [citizenId], references: [id])
+  
+  assignedCollectorId        String?
+  assignedCollector          CollectorProfile? @relation(fields: [assignedCollectorId], references: [id])
+  
+  image                      String?
+  weightCollectedKg          Float?
+  completedAt                DateTime?
+  
+  // Flood and emergency reporting extensions
+  isFloodReport              Boolean           @default(false)
+  floodDepth                 String?
+  drainageBlockage           String?
+  affectedInfrastructure     String?
+  governmentAgencyDispatched String?
+  
+  createdAt                  DateTime          @default(now())
+  updatedAt                  DateTime          @updatedAt
+
+  @@index([agencyId])
+  @@index([status])
+  @@index([citizenId])
+  @@index([assignedCollectorId])
+}

@@ -54,20 +54,26 @@ export default function SignUpPage() {
 
   const slides: SlideItem[] = [
     {
-      image: "/images/citizen_reporting_bin.jpg",
-      alt: "Citizen reporting an overflowing waste bin using a smartphone",
-      badge: "Citizen Reporting",
-      caption: "Select your designated waste agency and submit GPS-tagged reports.",
+      image: "/images/lagos_citizen_reporting.jpg",
+      alt: "Black Nigerian woman reporting an overflowing waste bin using her smartphone in Lagos",
+      badge: "Citizen Waste Reporting",
+      caption: "Select your designated waste agency and submit GPS-tagged reports with optional photo.",
     },
     {
-      image: "/images/waste_collection_truck.jpg",
-      alt: "Modern municipal green waste collection truck",
-      badge: "Agency Code Fleet Security",
+      image: "/images/lagos_flood_alert.jpg",
+      alt: "Black Nigerian citizen reporting severe street flooding and blocked storm drainage to the government",
+      badge: "Government Flood Alerts",
+      caption: "Direct citizen emergency alerts to state drainage authorities and rapid response units.",
+    },
+    {
+      image: "/images/lagos_waste_truck.jpg",
+      alt: "Green LAWMA municipal waste collection truck with Black Nigerian driver in Lagos",
+      badge: "Agency Fleet Operations",
       caption: "Sanitation crews register using authorized agency affiliation codes.",
     },
     {
-      image: "/images/waste_collectors_work.jpg",
-      alt: "Sanitation workers loading a green waste bin into the collection truck",
+      image: "/images/lagos_sanitation_crew.jpg",
+      alt: "Black Nigerian LAWMA sanitation workers loading waste into compactor truck in Lagos",
       badge: "Admin Dispatch Command",
       caption: "Agency directors triage incidents and manage driver rosters in real-time.",
     },
@@ -82,78 +88,54 @@ export default function SignUpPage() {
     return () => clearInterval(timer);
   }, [isPaused, slides.length]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage("");
+    setSuccessMessage("");
     setIsSubmitting(true);
 
-    const agencies = getStoredAgencies();
+    try {
+      const res = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fullName,
+          email,
+          password,
+          role: accountType,
+          neighborhood,
+          truckUnit,
+          agencyCode,
+          organizationName,
+          organizationType,
+          operatingDistrict,
+        }),
+      });
 
-    // 1. Collector Validation
-    if (accountType === "collector") {
-      const matchedAgency = agencies.find(
-        (a) => a.code.trim().toUpperCase() === agencyCode.trim().toUpperCase()
-      );
+      const data = await res.json();
 
-      if (!matchedAgency) {
+      if (!res.ok) {
         setIsSubmitting(false);
-        setErrorMessage(
-          `Invalid Agency Code "${agencyCode}". You must obtain an authorized code from your waste agency admin to register.`
-        );
+        setErrorMessage(data.error || "Registration failed. Please verify your details.");
         return;
       }
 
-      // Register new collector attached to this agency
-      const collectors = getStoredCollectors();
-      const newCollector: CollectorUser = {
-        id: `col-${Date.now()}`,
-        agencyId: matchedAgency.id,
-        name: fullName.trim() || "Field Driver",
-        email: email.trim(),
-        truckUnit: truckUnit.trim() || "Compactor Unit #07",
-        plateNumber: `LAG-${Math.floor(100 + Math.random() * 900)}-X`,
-        status: "Available",
-        compactorLoad: 0,
-        activeTasks: 0,
-        isActive: true,
-        joinedDate: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-      };
-
-      saveCollectors([newCollector, ...collectors]);
-
+      setIsSubmitting(false);
       setSuccessMessage(
-        `✓ Collector account registered! You are attached to ${matchedAgency.name}. Redirecting to login...`
+        accountType === "admin" && data.agencyCode
+          ? `✓ Agency registered! Your Agency Affiliation Code is ${data.agencyCode}. Redirecting...`
+          : data.message || "✓ Account created successfully! Redirecting to login..."
       );
-      setTimeout(() => router.push("/login"), 1500);
-      return;
+
+      if (typeof window !== "undefined" && data.user) {
+        localStorage.setItem("swmis_current_user", JSON.stringify(data.user));
+      }
+
+      setTimeout(() => router.push("/login"), 1600);
+    } catch (err: any) {
+      setIsSubmitting(false);
+      setErrorMessage("Network error: Could not contact registration service.");
     }
-
-    // 2. Agency Admin Registration
-    if (accountType === "admin") {
-      const generatedCode = generateAgencyCode("LCWA");
-      const newAgency: WasteAgency = {
-        id: `agency-${Date.now()}`,
-        name: organizationName.trim() || "Metropolitan Waste Authority",
-        code: generatedCode,
-        district: operatingDistrict.trim() || "Central Corridor",
-        phone: "+234 1 800-WASTE",
-        email: email.trim(),
-        type: organizationType,
-        weeklyPickupDays: "Tuesdays & Saturdays",
-      };
-
-      saveAgencies([newAgency, ...agencies]);
-
-      setSuccessMessage(
-        `✓ Agency registered! Your Agency Affiliation Code is ${generatedCode}. Redirecting to login...`
-      );
-      setTimeout(() => router.push("/login"), 1500);
-      return;
-    }
-
-    // 3. Citizen Registration
-    setSuccessMessage("✓ Citizen account created successfully! Redirecting to login...");
-    setTimeout(() => router.push("/login"), 1200);
   };
 
   return (
@@ -176,10 +158,11 @@ export default function SignUpPage() {
         <div className="relative z-10 my-auto w-full max-w-md mx-auto">
           <div className="relative w-full h-[460px] sm:h-[500px] rounded-3xl overflow-hidden border border-[#ffffff]/15 shadow-2xl group">
             <Image
-              src={slides[activeSlide].image}
+              src={`${slides[activeSlide].image}?v=lagos2`}
               alt={slides[activeSlide].alt}
               fill
               priority
+              unoptimized
               sizes="(max-width: 1024px) 100vw, 42vw"
               className="object-cover object-center transition-all duration-700"
             />
@@ -296,14 +279,14 @@ export default function SignUpPage() {
 
             {/* Collector Notice */}
             {accountType === "collector" && (
-              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900 leading-tight">
+              <div className="p-3 rounded-xl bg-[#eaf3ec] border border-[#1f7a4d]/25 text-[11px] text-[#123321] leading-tight">
                 <strong>Hiring Requirement:</strong> You must enter your authorized Waste Agency Affiliation Code (e.g. <code>LCWA-8492</code>) to bind to an agency fleet.
               </div>
             )}
 
             {/* Admin Notice */}
             {accountType === "admin" && (
-              <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-[11px] text-blue-900 leading-tight">
+              <div className="p-3 rounded-xl bg-[#eaf3ec] border border-[#1f7a4d]/25 text-[11px] text-[#123321] leading-tight">
                 <strong>Agency Dispatch:</strong> Register your municipal waste authority or licensed private PSP operator to manage trucks and triage citizen reports.
               </div>
             )}
