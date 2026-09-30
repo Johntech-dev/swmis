@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentSession } from "@/lib/auth";
 
+export const dynamic = "force-dynamic";
+
 function formatTimeAgo(date: Date): string {
   const diffMs = Date.now() - new Date(date).getTime();
   const diffSec = Math.floor(diffMs / 1000);

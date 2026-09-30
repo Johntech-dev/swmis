@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { hashPassword, signSessionToken, setSessionCookie, SessionUser } from "@/lib/auth";
 import { Role } from "@prisma/client";
 
+export const dynamic = "force-dynamic";
+
 function generateAgencyCode(prefix: string = "LCWA"): string {
   const num = Math.floor(1000 + Math.random() * 9000);
   return `${prefix.toUpperCase()}-${num}`;

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 
 export type DashboardRole = "citizen" | "collector" | "admin";
 
-interface NavItem {
+export interface NavItem {
   label: string;
   id: string;
   icon: (props: { className?: string }) => React.JSX.Element;
@@ -39,21 +39,16 @@ export default function DashboardLayout({
   const [mobileOpen, setMobileOpen] = useState(false);
   const router = useRouter();
 
-  const [resolvedUserName, setResolvedUserName] = useState<string>(userName || "");
+  const [storedUserName, setStoredUserName] = useState<string>("");
 
   useEffect(() => {
-    if (userName) {
-      setResolvedUserName(userName);
-      return;
-    }
-    if (typeof window !== "undefined") {
+    if (!userName && typeof window !== "undefined") {
       const stored = localStorage.getItem("swmis_current_user");
       if (stored) {
         try {
           const parsed = JSON.parse(stored);
           if (parsed.fullName) {
-            setResolvedUserName(parsed.fullName);
-            return;
+            setStoredUserName(parsed.fullName);
           }
         } catch {}
       }
@@ -61,7 +56,8 @@ export default function DashboardLayout({
   }, [userName]);
 
   const activeDisplayName =
-    resolvedUserName ||
+    userName ||
+    storedUserName ||
     (role === "admin"
       ? "Agency Admin"
       : role === "collector"

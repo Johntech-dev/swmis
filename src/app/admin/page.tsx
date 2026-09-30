@@ -707,7 +707,7 @@ export default function AdminPage() {
               ). They must enter this code when signing up on the platform.
             </p>
             <p>
-              2. If a driver leaves your company or is dismissed, click <strong>"Remove Driver"</strong> below. Their account will be locked immediately in the database, and the system will <strong>AUTOMATICALLY change your Agency Code</strong> so the old code cannot be shared with anyone else.
+              2. If a driver leaves your company or is dismissed, click <strong>&quot;Remove Driver&quot;</strong> below. Their account will be locked immediately in the database, and the system will <strong>AUTOMATICALLY change your Agency Code</strong> so the old code cannot be shared with anyone else.
             </p>
           </div>
 
